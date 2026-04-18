@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Models\Menu;
 use App\Models\Table;
 use App\Models\Transaction;
 use App\Models\TransactionDetail;
@@ -12,52 +13,37 @@ use Mike42\Escpos\PrintConnectors\WindowsPrintConnector;
 
 class Dashboard extends Component
 {
+    public $tableId;
     public $tableName;
     public $cart = [];
+    public $menus = [];
+
     public $showReceiptModal = false;
     public $receiptData = [];
 
-    public function mount()
+    public function mount($tableId)
     {
-        if (!session()->has('table_id')) {
-            $this->redirect('/', navigate: true);
-            return;
-        }
+        $table = Table::findOrFail($tableId);
 
-        $this->tableName = session('table_name');
+        $this->tableId = $table->id;
+        $this->tableName = $table->name;
 
-        // 🔥 load cart per meja
-        $this->cart = session('cart_' . session('table_id'), []);
+        // cart per meja
+        $this->cart = session('cart_' . $this->tableId, []);
+
+        $this->menus = Menu::where('is_active', true)->get();
+
+        // set status meja saat mulai pakai
+        $table->update(['status' => 'used']);
     }
 
-    public function logout()
-    {
-        Auth::logout();
-
-        session()->flush(); // 🔥 clean all session
-
-        $this->redirect('/', navigate: true);
-    }
-
-    public function backToTable()
-    {
-        if (session()->has('table_id')) {
-            Table::find(session('table_id'))
-                ?->update(['status' => 'available']);
-        }
-
-        session()->forget('table_id');
-        session()->forget('table_name');
-
-        $this->cart = [];
-
-        $this->redirect('/tables', navigate: true);
-    }
+    /* =========================
+        CART SYSTEM
+    ========================= */
 
     public function addToCart($id)
     {
-        $menuName = "Menu " . $id;
-        $price = 10000;
+        $menu = Menu::findOrFail($id);
 
         foreach ($this->cart as $key => $item) {
             if ($item['id'] == $id) {
@@ -68,10 +54,11 @@ class Dashboard extends Component
         }
 
         $this->cart[] = [
-            'id' => $id,
-            'name' => $menuName,
-            'price' => $price,
-            'qty' => 1
+            'id' => $menu->id,
+            'name' => $menu->name,
+            'price' => $menu->price,
+            'qty' => 1,
+            'category' => $menu->category,
         ];
 
         $this->syncCart();
@@ -107,7 +94,7 @@ class Dashboard extends Component
 
     public function syncCart()
     {
-        session()->put('cart_' . session('table_id'), $this->cart);
+        session()->put('cart_' . $this->tableId, $this->cart);
     }
 
     public function getTotalProperty()
@@ -115,6 +102,10 @@ class Dashboard extends Component
         return collect($this->cart)
             ->sum(fn($item) => $item['price'] * $item['qty']);
     }
+
+    /* =========================
+        CHECKOUT
+    ========================= */
 
     public function checkout()
     {
@@ -124,9 +115,10 @@ class Dashboard extends Component
 
         $transaction = Transaction::create([
             'invoice' => $invoice,
-            'table_id' => session('table_id'),
+            'table_id' => $this->tableId,
             'user_id' => Auth::id(),
             'total' => $this->total,
+            'status' => 'pending',
         ]);
 
         foreach ($this->cart as $item) {
@@ -135,35 +127,41 @@ class Dashboard extends Component
                 'name' => $item['name'],
                 'price' => $item['price'],
                 'qty' => $item['qty'],
+                'category' => $item['category'],
                 'subtotal' => $item['price'] * $item['qty'],
+
+                // KDS default
+                'status' => 'pending',
             ]);
         }
 
-        Table::find(session('table_id'))
-            ?->update(['status' => 'available']);
-
-        // print (opsional dev mode)
-        // $this->printReceipt($transaction, $this->cart);
-        // $this->printKitchen($transaction, $this->cart);
-
-        // reset cart
+        // clear cart
         $this->cart = [];
-        session()->forget('cart_' . session('table_id'));
+        session()->forget('cart_' . $this->tableId);
 
-        // 🔥 TAMPILKAN MODAL (INI HARUS DI ATAS REDIRECT)
+        // receipt modal
         $this->receiptData = [
             'invoice' => $transaction->invoice,
             'items' => $transaction->details()->get(),
             'total' => $transaction->total,
-            'table' => session('table_name'),
+            'table' => $this->tableName,
         ];
 
         $this->showReceiptModal = true;
+    }
 
-        session()->flash('success', 'Transaksi berhasil: ' . $invoice);
+    /* =========================
+        CLOSE TABLE (PELANGGAN PULANG)
+    ========================= */
 
-        // ❌ HAPUS REDIRECT
-        // $this->redirect('/tables', navigate: true);
+    public function closeTable()
+    {
+        Table::find($this->tableId)
+            ?->update(['status' => 'available']);
+
+        session()->forget('cart_' . $this->tableId);
+
+        $this->redirect('/tables', navigate: true);
     }
 
     public function closeReceipt()
@@ -172,56 +170,9 @@ class Dashboard extends Component
         $this->receiptData = [];
     }
 
-    private function printReceipt($transaction, $items)
-    {
-        $connector = new WindowsPrintConnector("POS-58"); // nama printer Windows
-        $printer = new Printer($connector);
-
-        $printer->text("===== STRUK KASIR =====\n");
-        $printer->text("Invoice: {$transaction->invoice}\n");
-        $printer->text("Meja: " . session('table_name') . "\n");
-        $printer->text("------------------------\n");
-
-        foreach ($items as $item) {
-
-            $subtotal = $item['qty'] * $item['price'];
-
-            $printer->text("{$item['name']}\n");
-
-            $printer->text(
-                $item['qty'] . " x " . $item['price'] . " = " . $subtotal . "\n"
-            );
-        }
-
-        $printer->text("------------------------\n");
-        $printer->text("TOTAL: {$transaction->total}\n");
-
-        $printer->text("\nTerima Kasih\n");
-
-        $printer->cut();
-        $printer->close();
-    }
-
-    private function printKitchen($transaction, $items)
-    {
-        $connector = new WindowsPrintConnector("POS-KITCHEN");
-        $printer = new Printer($connector);
-
-        $printer->text("===== KITCHEN ORDER =====\n");
-        $printer->text("Meja: " . session('table_name') . "\n");
-        $printer->text("Invoice: {$transaction->invoice}\n");
-        $printer->text("------------------------\n");
-
-        foreach ($items as $item) {
-            $printer->text("{$item['name']} - {$item['qty']}\n");
-        }
-
-        $printer->text("------------------------\n");
-        $printer->text("MASAK SEKARANG\n");
-
-        $printer->cut();
-        $printer->close();
-    }
+    /* =========================
+        RENDER
+    ========================= */
 
     public function render()
     {

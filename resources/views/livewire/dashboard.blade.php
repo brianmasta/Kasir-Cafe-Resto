@@ -51,19 +51,21 @@
 
             <div class="row">
 
-                @for($i = 1; $i <= 8; $i++)
+                @foreach($menus as $menu)
                 <div class="col-md-3 mb-3">
 
                     <div class="card p-3 text-center shadow-sm"
-                         style="border-radius:15px; cursor:pointer;">
+                        style="border-radius:15px; cursor:pointer;">
 
                         <div style="font-size:30px;">🍽️</div>
 
-                        <h6 class="mt-2 mb-1">Menu {{ $i }}</h6>
+                        <h6 class="mt-2 mb-1">{{ $menu->name }}</h6>
 
-                        <small class="text-muted">Rp 10.000</small>
+                        <small class="text-muted">
+                            Rp {{ number_format($menu->price) }}
+                        </small>
 
-                        <button wire:click="addToCart({{ $i }})"
+                        <button wire:click="addToCart({{ $menu->id }})"
                                 class="btn btn-sm btn-primary mt-2 w-100">
                             + Tambah
                         </button>
@@ -71,7 +73,7 @@
                     </div>
 
                 </div>
-                @endfor
+                @endforeach
 
             </div>
 

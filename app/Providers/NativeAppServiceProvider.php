@@ -13,7 +13,22 @@ class NativeAppServiceProvider implements ProvidesPhpIni
      */
     public function boot(): void
     {
-        Window::open();
+        Window::open(); // tetap pakai di kasus kamu
+
+        Window::title('POS Restoran');
+
+        // 🔥 ini yang bikin fullscreen langsung
+        Window::fullscreen();
+
+        // opsional (biar benar-benar seperti mesin kasir)
+        Window::resizable(false);
+
+        // fokus window
+        Window::focus();
+
+        if (app()->isLocal()) {
+            Window::openDevTools();
+        }
     }
 
     /**
